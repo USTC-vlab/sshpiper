@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"log"
+	"errors"
 	"bytes"
 	"io/ioutil"
 	"encoding/base64"
@@ -18,8 +19,11 @@ type plugin struct {
 }
 
 func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalChallengeContext) (
-	func (key ssh.PublicKey) (conn net.Conn, data interface{}, err error), *ssh.AuthPipe, error) {
-	return func (key ssh.PublicKey) (conn net.Conn, data interface{}, err error) {
+	func (key ssh.PublicKey, data interface{}) (net.Conn, interface{}, error), *ssh.AuthPipe, error) {
+	type Data struct {
+		Password string
+	}
+	return func (key ssh.PublicKey, data interface{}) (net.Conn, interface{}, error) {
 		pubkeyType := key.Type()
 		pubkeyData := base64.StdEncoding.EncodeToString(key.Marshal())
 		type Request struct {
@@ -32,46 +36,50 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 		}
 		jsonData, err := json.Marshal(request)
 		if err != nil {
-			return nil, nil, err
+			return nil, data, err
 		}
 		res, err := http.Post(config.API, "application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
-			return nil, nil, err
+			return nil, data, err
 		}
 		defer res.Body.Close()
 		body, err := ioutil.ReadAll(res.Body)
 		if err != nil {
-			return nil, nil, err
+			return nil, data, err
 		}
 		type Response struct {
+			Status string `json:"status`
 			Address string `json:"address"`
-			PrivateKey string `json:"private_key"`
 		}
 		var response Response
 		err = json.Unmarshal(body, &response)
 		if err != nil {
-			return nil, nil, err
+			return nil, data, err
 		}
-		signer, err := ssh.ParsePrivateKey([]byte(response.PrivateKey))
-		if err != nil || signer == nil {
-			return nil, nil, err
+		if response.Status != "ok" {
+			return nil, data, errors.New("not authenticated")
 		}
-		conn, err = net.Dial("tcp", response.Address)
+		conn, err := net.Dial("tcp", response.Address)
 		if err != nil {
-			return nil, nil, err
+			return nil, data, err
 		}
-		return conn, signer, nil
+		return conn, data, nil
 	}, &ssh.AuthPipe{
 		User: conn.User(),
 
-		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey, data interface{}) (ssh.AuthPipeType, ssh.AuthMethod, error) {
-			signer, ok := data.(ssh.Signer)
-			if !ok || signer == nil {
-				// try one
-				return ssh.AuthPipeTypeNone, nil, nil
+		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey, data interface{}) (ssh.AuthPipeType, ssh.AuthMethod, interface{}, error) {
+			data_, ok := data.(Data)
+			if !ok {
+				return ssh.AuthPipeTypeDiscard, nil, data, nil
 			}
- 
-			return ssh.AuthPipeTypeMap, ssh.PublicKeys(signer), nil
+			password := data_.Password
+			return ssh.AuthPipeTypeMap, ssh.Password(password), data, nil
+		},
+
+		PasswordCallback: func(conn ssh.ConnMetadata, password []byte, data interface{}) (ssh.AuthPipeType, ssh.AuthMethod, interface{}, error) {
+			return ssh.AuthPipeTypeDiscard, nil, Data {
+				Password: string(password),
+			}, nil
 		},
 
 		UpstreamHostKeyCallback: ssh.InsecureIgnoreHostKey(),

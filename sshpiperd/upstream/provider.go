@@ -15,7 +15,7 @@ import (
 // connecting to upstream.
 // e.g. map downstream public key to another upstream private key
 type Handler func(conn ssh.ConnMetadata, challengeContext ssh.AdditionalChallengeContext) (
-	func (key ssh.PublicKey) (conn net.Conn, data interface{}, err error), *ssh.AuthPipe, error)
+	func (key ssh.PublicKey, data interface{}) (net.Conn, interface{}, error), *ssh.AuthPipe, error)
 
 // CreatePipeOption contains options for creating a pipe to upstream
 type CreatePipeOption struct {
