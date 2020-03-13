@@ -46,10 +46,10 @@ type AuthPipe struct {
 	NoneAuthCallback func(conn ConnMetadata) (AuthPipeType, AuthMethod, error)
 
 	// PublicKeyCallback, if non-nil, is called when downstream requests a password auth.
-	PasswordCallback func(conn ConnMetadata, password []byte, data interface {}) (AuthPipeType, AuthMethod, interface{}, error)
+	PasswordCallback func(conn ConnMetadata, password []byte, data *AuthData) (AuthPipeType, AuthMethod, error)
 
 	// PublicKeyCallback, if non-nil, is called when downstream requests a publickey auth.
-	PublicKeyCallback func(conn ConnMetadata, key PublicKey, data interface {}) (AuthPipeType, AuthMethod, interface{}, error)
+	PublicKeyCallback func(conn ConnMetadata, key PublicKey, data *AuthData) (AuthPipeType, AuthMethod, error)
 
 	// UpstreamHostKeyCallback is called during the cryptographic
 	// handshake to validate the uptream server's host key. The piper
@@ -95,7 +95,7 @@ type PiperConfig struct {
 	// SSHPiper will use the username from downstream if empty username is returned.
 	// If any error occurs, the piped connection will be closed.
 	FindUpstream func(conn ConnMetadata, challengeCtx AdditionalChallengeContext) (
-		func (key PublicKey, data interface{}) (net.Conn, interface{}, error), *AuthPipe, error)
+		func (key PublicKey, data *AuthData) (net.Conn, error), *AuthPipe, error)
 
 	// ServerVersion is the version identification string to announce in
 	// the public handshake.
@@ -131,6 +131,11 @@ type PiperConn struct {
 
 	HookUpstreamMsg   func(conn ConnMetadata, msg []byte) ([]byte, error)
 	HookDownstreamMsg func(conn ConnMetadata, msg []byte) ([]byte, error)
+}
+
+type AuthData struct {
+	HasCheckedPublicKey bool
+	CustomData interface{}
 }
 
 // Wait blocks until the piped connection has shut down, and returns the
@@ -296,7 +301,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 	}
 
 	var upconn net.Conn
-	var data interface{}
+	var data AuthData
 
 	p.processAuthMsg = func(msg *userAuthRequestMsg) (*userAuthRequestMsg, error) {
 
@@ -304,11 +309,13 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 		var authMethod AuthMethod
 		switch msg.Method {
 		case "none":
-			if pipeauth.NoneAuthCallback == nil {
+			if p.upstream == nil {
 				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
-					Methods: []string {"password"},
+					Methods: []string {"publickey"},
 					PartialSuccess: false,
 				}))
+			}
+			if pipeauth.NoneAuthCallback == nil {
 				return nil, nil
 			}
 
@@ -330,7 +337,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 
 
 			if p.upstream == nil {
-				upconn, data, err = upconnCallback(downKey, data)
+				upconn, err = upconnCallback(downKey, &data)
 				if err != nil {
 					return nil, err
 				}
@@ -355,7 +362,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				}
 			}
 
-			authType, authMethod, data, err = pipeauth.PublicKeyCallback(d, downKey, data)
+			authType, authMethod, err = pipeauth.PublicKeyCallback(d, downKey, &data)
 			if err != nil {
 				return nil, err
 			}
@@ -378,15 +385,33 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				return nil, err
 			}
 
+
+
 			if !ok {
-				return noneAuthMsg(mappedUser), nil
+				//return noneAuthMsg(mappedUser), nil
+				return nil, errors.New("failed to check public key")
 			}
 
+			data.HasCheckedPublicKey = true
+
+			p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
+				Methods: []string {"password"},
+				PartialSuccess: false,
+			}))
+
+			return nil, nil
+
 		case "password":
+			if p.upstream == nil {
+				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
+					Methods: []string {"publickey"},
+					PartialSuccess: true,
+				}))
+				return nil, nil
+			}
 			if pipeauth.PasswordCallback == nil {
 				break
 			}
-
 			payload := msg.Payload
 			if len(payload) < 1 || payload[0] != 0 {
 				return nil, parseError(msgUserAuthRequest)
@@ -397,16 +422,9 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				return nil, parseError(msgUserAuthRequest)
 			}
 
-			authType, authMethod, data, err = pipeauth.PasswordCallback(d, password, data)
+			authType, authMethod, err = pipeauth.PasswordCallback(d, password, &data)
 			if err != nil {
 				return nil, err
-			}
-			if p.upstream == nil {
-				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
-					Methods: []string {"publickey"},
-					PartialSuccess: true,
-				}))
-				return nil, nil
 			}
 
 		default:
