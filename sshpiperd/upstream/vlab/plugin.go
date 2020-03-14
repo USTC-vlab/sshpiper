@@ -79,6 +79,14 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 	}, nil
 }
 
+func udpLogger(msg []byte) {
+	conn, err := net.Dial("udp", config.Logger)
+	if err != nil {
+		return
+	}
+	conn.Write(msg)
+}
+
 func (p *plugin) GetName() string {
 	return "vlab"
 }
@@ -89,6 +97,10 @@ func (p *plugin) GetOpts() interface{} {
 
 func (p *plugin) GetHandler() upstream.Handler {
 	return findUpstreamFromAPI
+}
+
+func (p *plugin) GetLogger() func ([]byte) {
+	return udpLogger
 }
 
 func (p *plugin) CreatePipe(opt upstream.CreatePipeOption) error {

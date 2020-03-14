@@ -53,6 +53,7 @@ type Provider interface {
 	PipeManager
 
 	GetHandler() Handler
+	GetLogger() func ([]byte)
 }
 
 var (

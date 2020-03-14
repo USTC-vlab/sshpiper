@@ -8,7 +8,9 @@ package ssh
 import (
 	"errors"
 	"fmt"
+	"time"
 	"net"
+	"encoding/json"
 )
 
 // AuthPipeType declares how sshpiper handle piped auth message
@@ -107,6 +109,8 @@ type PiperConfig struct {
 	// BannerCallback, if present, is called and the return string is sent to
 	// the client after key exchange completed but before authentication.
 	BannerCallback func(conn ConnMetadata) string
+
+	LogCallback func(msg []byte)
 }
 
 type upstream struct{ *connection }
@@ -129,8 +133,16 @@ type pipedConn struct {
 type PiperConn struct {
 	*pipedConn
 
+	LoginTime int64
+	DisconnectTime int64
+	ClientIp string
+	Username string
+	HostIp string
+
 	HookUpstreamMsg   func(conn ConnMetadata, msg []byte) ([]byte, error)
 	HookDownstreamMsg func(conn ConnMetadata, msg []byte) ([]byte, error)
+
+	LogCallback func(msg []byte)
 }
 
 type AuthData struct {
@@ -165,6 +177,28 @@ func (p *PiperConn) Wait() error {
 // Close the piped connection create by SSHPiper
 func (p *PiperConn) Close() {
 	p.pipedConn.Close()
+	p.DisconnectTime = time.Now().Unix()
+	type LogMessage struct {
+		LoginTime int64 `json:"login_time"`
+		DisconnectTime int64 `json:"disconnect_time"`
+		ClientIp string `json:"client_ip"`
+		HostIp string `json:"host_ip"`
+		Username string `json:"user_name"`
+	}
+	logMsg := LogMessage {
+		LoginTime: p.LoginTime,
+		DisconnectTime: p.DisconnectTime,
+		ClientIp: p.ClientIp,
+		HostIp: p.HostIp,
+		Username: p.Username,
+	}
+	jsonMsg, err := json.Marshal(logMsg)
+	if err != nil {
+		return
+	}
+	if p.LogCallback != nil {
+		p.LogCallback(jsonMsg)
+	}
 }
 
 // UpstreamConnMeta returns the ConnMetadata of the piper and upstream
@@ -302,6 +336,9 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 
 	var upconn net.Conn
 	var data AuthData
+	var hostIp, clientIp, userName string
+
+	clientIp = conn.RemoteAddr().String()
 
 	p.processAuthMsg = func(msg *userAuthRequestMsg) (*userAuthRequestMsg, error) {
 
@@ -342,6 +379,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 					return nil, err
 				}
 				addr := upconn.RemoteAddr().String()
+				hostIp = addr
 				u, err := newUpstream(upconn, addr, &ClientConfig{
 					HostKeyCallback: pipeauth.UpstreamHostKeyCallback,
 				})
@@ -355,6 +393,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				}()
 	
 				u.user = mappedUser
+				userName = u.user
 				p.upstream = u
 				err = p.upstream.sendAuthReq()
 				if err != nil {
@@ -507,7 +546,16 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 		return nil, err
 	}
 
-	return &PiperConn{pipedConn: p}, nil
+	loginTime := time.Now().Unix()
+
+	return &PiperConn{
+		pipedConn: p,
+		LoginTime: loginTime,
+		HostIp: hostIp,
+		ClientIp: clientIp,
+		Username: userName,
+		LogCallback: piper.LogCallback,
+	}, nil
 }
 
 func (pipe *pipedConn) ack(key PublicKey) error {

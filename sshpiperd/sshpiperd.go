@@ -78,6 +78,7 @@ func installDrivers(piper *ssh.PiperConfig, config *piperdConfig, logger *log.Lo
 				}
 
 				piper.FindUpstream = handler
+				piper.LogCallback = plugin.(upstream.Provider).GetLogger()
 				return nil
 			},
 		},
