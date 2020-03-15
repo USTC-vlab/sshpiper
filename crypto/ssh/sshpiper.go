@@ -181,7 +181,7 @@ func (p *PiperConn) Close() {
 	type LogMessage struct {
 		LoginTime int64 `json:"login_time"`
 		DisconnectTime int64 `json:"disconnect_time"`
-		ClientIp string `json:"client_ip"`
+		ClientIp string `json:"remote_ip"`
 		HostIp string `json:"host_ip"`
 		Username string `json:"user_name"`
 	}
@@ -372,6 +372,34 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				return nil, err
 			}
 
+			authType, authMethod, err = pipeauth.PublicKeyCallback(d, downKey, &data)
+			if err != nil {
+				return nil, err
+			}
+
+			if isQuery {
+				// reply for query msg
+				// skip query from upstream
+				err = p.ack(downKey)
+				if err != nil {
+					return nil, err
+				}
+
+				// discard msg
+				return nil, nil
+			}
+
+			ok, err := p.checkPublicKey(msg, downKey, sig)
+
+			if err != nil {
+				return nil, err
+			}
+
+
+			if !ok {
+				//return noneAuthMsg(mappedUser), nil
+				return nil, errors.New("failed to check public key")
+			}
 
 			if p.upstream == nil {
 				upconn, err = upconnCallback(downKey, &data)
@@ -401,41 +429,11 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				}
 			}
 
-			authType, authMethod, err = pipeauth.PublicKeyCallback(d, downKey, &data)
-			if err != nil {
-				return nil, err
-			}
-
-			if isQuery {
-				// reply for query msg
-				// skip query from upstream
-				err = p.ack(downKey)
-				if err != nil {
-					return nil, err
-				}
-
-				// discard msg
-				return nil, nil
-			}
-
-			ok, err := p.checkPublicKey(msg, downKey, sig)
-
-			if err != nil {
-				return nil, err
-			}
-
-
-
-			if !ok {
-				//return noneAuthMsg(mappedUser), nil
-				return nil, errors.New("failed to check public key")
-			}
-
 			data.HasCheckedPublicKey = true
 
 			p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
 				Methods: []string {"password"},
-				PartialSuccess: false,
+				PartialSuccess: true,
 			}))
 
 			return nil, nil
@@ -444,7 +442,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 			if p.upstream == nil {
 				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
 					Methods: []string {"publickey"},
-					PartialSuccess: true,
+					PartialSuccess: false,
 				}))
 				return nil, nil
 			}
