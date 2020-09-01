@@ -79,7 +79,7 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 			return nil, err
 		}
 		if response.Status != "ok" {
-			return nil, errors.New("not authenticated")
+			return nil, nil
 		}
 		conn, err := net.Dial("tcp", response.Address)
 		if err != nil {

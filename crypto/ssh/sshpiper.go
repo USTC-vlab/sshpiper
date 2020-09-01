@@ -418,6 +418,13 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				if err != nil {
 					return nil, err
 				}
+				if upconn == nil {
+					p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
+						Methods: []string {"publickey", "keyboard-interactive"},
+						PartialSuccess: false,
+					}))
+					return nil, nil
+				}
 				addr := upconn.RemoteAddr().String()
 				hostIp = addr
 				u, err := newUpstream(upconn, addr, &ClientConfig{
