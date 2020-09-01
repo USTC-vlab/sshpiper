@@ -404,8 +404,13 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 
 
 			if !ok {
+				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
+					Methods: []string {"publickey", "keyboard-interactive"},
+					PartialSuccess: false,
+				}))
+				return nil, nil
 				//return noneAuthMsg(mappedUser), nil
-				return nil, errors.New("failed to check public key")
+				//return nil, errors.New("failed to check public key")
 			}
 
 			if p.upstream == nil {
