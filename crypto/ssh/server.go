@@ -686,12 +686,15 @@ func (c *sshClientKeyboardInteractive) Challenge(user, instruction string, quest
 	}
 
 	packet, err := c.transport.readPacket()
+
 	if err != nil {
 		return nil, err
 	}
+
 	if packet[0] != msgUserAuthInfoResponse {
 		return nil, unexpectedMessageError(msgUserAuthInfoResponse, packet[0])
 	}
+
 	packet = packet[1:]
 
 	n, packet, ok := parseUint32(packet)

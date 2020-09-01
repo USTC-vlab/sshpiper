@@ -59,6 +59,14 @@ type AuthPipe struct {
 	// to succeed. The functions InsecureIgnoreHostKey or
 	// FixedHostKey can be used for simplistic host key checks.
 	UpstreamHostKeyCallback HostKeyCallback
+
+	PasswordBeforePublicKeyCallback func(password []byte, data *AuthData)
+
+	InteractiveQuestions []string
+
+	InteractiveEcho []bool
+
+	InteractiveInstrution string
 }
 
 // AdditionalChallengeContext is the context returned by AdditionalChallenge and will pass to FindUpstream for building
@@ -97,7 +105,7 @@ type PiperConfig struct {
 	// SSHPiper will use the username from downstream if empty username is returned.
 	// If any error occurs, the piped connection will be closed.
 	FindUpstream func(conn ConnMetadata, challengeCtx AdditionalChallengeContext) (
-		func (key PublicKey, data *AuthData) (net.Conn, error), *AuthPipe, error)
+		func (unix_username string, key PublicKey, answers []string, data *AuthData) (net.Conn, error), *AuthPipe, error)
 
 	// ServerVersion is the version identification string to announce in
 	// the public handshake.
@@ -147,6 +155,9 @@ type PiperConn struct {
 
 type AuthData struct {
 	HasCheckedPublicKey bool
+	HasSentPassword bool
+	Password []byte
+	CertSigner Signer
 	CustomData interface{}
 }
 
@@ -344,11 +355,12 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 
 		var authType = AuthPipeTypeDiscard
 		var authMethod AuthMethod
+
 		switch msg.Method {
 		case "none":
 			if p.upstream == nil {
 				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
-					Methods: []string {"publickey"},
+					Methods: []string {"publickey", "keyboard-interactive"},
 					PartialSuccess: false,
 				}))
 			}
@@ -368,11 +380,6 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 
 			// pubKey MAP
 			downKey, isQuery, sig, err := parsePublicKeyMsg(msg)
-			if err != nil {
-				return nil, err
-			}
-
-			authType, authMethod, err = pipeauth.PublicKeyCallback(d, downKey, &data)
 			if err != nil {
 				return nil, err
 			}
@@ -402,7 +409,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 			}
 
 			if p.upstream == nil {
-				upconn, err = upconnCallback(downKey, &data)
+				upconn, err = upconnCallback(mappedUser, downKey, nil, &data)
 				if err != nil {
 					return nil, err
 				}
@@ -431,21 +438,20 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 
 			data.HasCheckedPublicKey = true
 
-			p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
-				Methods: []string {"password"},
-				PartialSuccess: true,
-			}))
+			authType, authMethod, err = pipeauth.PublicKeyCallback(d, downKey, &data)
+			if err != nil {
+				return nil, err
+			}
 
-			return nil, nil
-
-		case "password":
-			if p.upstream == nil {
+			if authType == AuthPipeTypeDiscard {
 				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
-					Methods: []string {"publickey"},
-					PartialSuccess: false,
+					Methods: []string {"password"},
+					PartialSuccess: true,
 				}))
 				return nil, nil
 			}
+
+		case "password":
 			if pipeauth.PasswordCallback == nil {
 				break
 			}
@@ -459,9 +465,57 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				return nil, parseError(msgUserAuthRequest)
 			}
 
+			if p.upstream == nil {
+				if pipeauth.PasswordBeforePublicKeyCallback != nil {
+					pipeauth.PasswordBeforePublicKeyCallback(password, &data)
+				}
+				p.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
+					Methods: []string {"publickey"},
+					PartialSuccess: true,
+				}))
+				return nil, nil
+			}
+
 			authType, authMethod, err = pipeauth.PasswordCallback(d, password, &data)
 			if err != nil {
 				return nil, err
+			}
+
+		case "keyboard-interactive":
+			if p.upstream == nil {
+				prompter := &sshClientKeyboardInteractive{d.connection}
+				answers, err := prompter.Challenge(mappedUser, pipeauth.InteractiveInstrution, pipeauth.InteractiveQuestions, pipeauth.InteractiveEcho)
+				if err != nil {
+					return nil, err
+				}
+				upconn, err = upconnCallback(mappedUser, nil, answers, &data)
+				if err != nil {
+					return nil, err
+				}
+				addr := upconn.RemoteAddr().String()
+				hostIp = addr
+				u, err := newUpstream(upconn, addr, &ClientConfig{
+					HostKeyCallback: pipeauth.UpstreamHostKeyCallback,
+				})
+				if err != nil {
+					return nil, err
+				}
+				defer func() {
+					if p == nil {
+						u.Close()
+					}
+				}()
+	
+				u.user = mappedUser
+				userName = u.user
+				p.upstream = u
+				err = p.upstream.sendAuthReq()
+				if err != nil {
+					return nil, err
+				}
+
+				authType = AuthPipeTypeMap
+				authMethod = Password(string(data.Password))
 			}
 
 		default:
@@ -718,7 +772,7 @@ func (pipe *pipedConn) Close() {
 	pipe.downstream.transport.Close()
 }
 
-func (pipe *pipedConn) pipeAuthSkipBanner(packet []byte) (bool, error) {
+func (pipe *pipedConn) pipeAuthSkipBanner(method string, packet []byte) (bool, error) {
 	// pipe to auth succ if not a authreq
 	// typically, authinfo see RFC 4256
 	// TODO support hook this msg
@@ -734,6 +788,14 @@ func (pipe *pipedConn) pipeAuthSkipBanner(packet []byte) (bool, error) {
 		}
 
 		msgType := packet[0]
+
+		if msgType == msgUserAuthFailure && method == "publickey" {
+			err = pipe.downstream.transport.writePacket(Marshal(userAuthFailureMsg {
+				Methods: []string {"password"},
+				PartialSuccess: true,
+			}))
+			return false, err
+		}
 
 		if err = pipe.downstream.transport.writePacket(packet); err != nil {
 			return false, err
@@ -772,7 +834,7 @@ func (pipe *pipedConn) pipeAuth(initUserAuthMsg *userAuthRequestMsg) error {
 		// nil for ignore
 		if userAuthMsg != nil {
 			// send a mapped auth msg
-			succ, err := pipe.pipeAuthSkipBanner(Marshal(userAuthMsg))
+			succ, err := pipe.pipeAuthSkipBanner(userAuthMsg.Method, Marshal(userAuthMsg))
 
 			if err != nil {
 				return err
@@ -807,7 +869,7 @@ func (pipe *pipedConn) pipeAuth(initUserAuthMsg *userAuthRequestMsg) error {
 			}
 
 			// pipe other auth msg
-			succ, err := pipe.pipeAuthSkipBanner(packet)
+			succ, err := pipe.pipeAuthSkipBanner("", packet)
 
 			if err != nil {
 				return err
