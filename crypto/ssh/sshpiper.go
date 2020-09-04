@@ -438,7 +438,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 						u.Close()
 					}
 				}()
-	
+
 				u.user = mappedUser
 				userName = u.user
 				p.upstream = u
@@ -1005,7 +1005,7 @@ func (c *connection) serverHandshakeNoAuth(config *ServerConfig) (*Permissions, 
 	if config.ServerVersion != "" {
 		c.serverVersion = []byte(config.ServerVersion)
 	} else {
-		c.serverVersion = []byte("SSH-2.0-SSHPiper")
+		c.serverVersion = []byte("SSH-2.0-taokystrong")
 	}
 	c.clientVersion, err = exchangeVersions(c.sshConn.conn, c.serverVersion)
 	if err != nil {
