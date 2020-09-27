@@ -80,7 +80,7 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				return nil, err
 			}
 			if response.Status != "ok" {
-				return nil, nil
+				return nil, errors.New("Failed to auth")
 			}
 			conn, err := net.Dial("tcp", response.Address)
 			if err != nil {
@@ -91,15 +91,15 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				signer, err = ssh.ParsePrivateKey([]byte(response.PrivateKey))
 			}
 			if err != nil {
-				return conn, nil
+				return conn, err
 			}
 			pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(response.Cert))
 			if err != nil {
-				return conn, nil
+				return conn, err
 			}
 			certSigner, err := ssh.NewCertSigner(pk.(*ssh.Certificate), signer)
 			if err != nil {
-				return conn, nil
+				return conn, err
 			}
 			data.CertSigner = certSigner
 			return conn, nil
