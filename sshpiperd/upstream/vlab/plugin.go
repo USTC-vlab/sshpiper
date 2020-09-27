@@ -91,15 +91,15 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				signer, err = ssh.ParsePrivateKey([]byte(response.PrivateKey))
 			}
 			if err != nil {
-				return conn, err
+				return conn, nil
 			}
 			pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(response.Cert))
 			if err != nil {
-				return conn, err
+				return conn, nil
 			}
 			certSigner, err := ssh.NewCertSigner(pk.(*ssh.Certificate), signer)
 			if err != nil {
-				return conn, err
+				return conn, nil
 			}
 			data.CertSigner = certSigner
 			return conn, nil
