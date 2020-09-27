@@ -129,9 +129,9 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				data.Password = password
 			},
 
-			InteractiveInstrution: "Please input Vlab Username & Password and UNIX Password",
+			InteractiveInstrution: "Please input Vlab username & password and UNIX password.",
 
-			InteractiveQuestions: []string{"Vlab Username (Student ID): ", "Vlab Password: ", "UNIX Password:"},
+			InteractiveQuestions: []string{"Vlab username (Student ID): ", "Vlab password: ", "UNIX password: "},
 
 			InteractiveEcho: []bool{true, false, false},
 		}, nil
