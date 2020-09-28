@@ -517,7 +517,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 						u.Close()
 					}
 				}()
-	
+
 				u.user = mappedUser
 				userName = u.user
 				p.upstream = u
@@ -527,7 +527,13 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 				}
 
 				authType = AuthPipeTypeMap
-				authMethod = Password(string(data.Password))
+				if data.HasSentPassword {
+					authMethod = Password(string(data.Password))
+				} else if data.CertSigner != nil {
+					authMethod = PublicKeys(data.CertSigner)
+				} else {
+					return nil, errors.New("No auth credential provided")
+				}
 			}
 
 		default:
