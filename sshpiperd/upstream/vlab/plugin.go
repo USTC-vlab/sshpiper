@@ -21,6 +21,16 @@ type plugin struct {
 
 func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalChallengeContext) (
 	func(unixUsername string, key ssh.PublicKey, answers []string, data *ssh.AuthData) (net.Conn, error), *ssh.AuthPipe, error) {
+	sshUser := conn.User()
+	requireUnixPassword := !(sshUser == "root" || sshUser == "ubuntu" || sshUser == "vlab")
+
+	interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
+	interactiveEcho := []bool{true, false}
+	if requireUnixPassword {
+		interactiveQuestions = append(interactiveQuestions, "UNIX password: ")
+		interactiveEcho = append(interactiveEcho, false)
+	}
+
 	return func(unixUsername string, key ssh.PublicKey, answers []string, data *ssh.AuthData) (net.Conn, error) {
 			var authType, pubkeyType, pubkeyData, username, password string
 			if key != nil {
@@ -28,13 +38,20 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				pubkeyData = base64.StdEncoding.EncodeToString(key.Marshal())
 				authType = "key"
 			} else {
-				if len(answers) < 3 {
+				if requireUnixPassword && len(answers) < 3 {
+					return nil, errors.New("invalid auth answers")
+				} else if !requireUnixPassword && len(answers) < 2 {
 					return nil, errors.New("invalid auth answers")
 				}
 				username = answers[0]
 				password = answers[1]
-				data.HasSentPassword = true
-				data.Password = []byte(answers[2])
+				if requireUnixPassword {
+					data.HasSentPassword = true
+					data.Password = []byte(answers[2])
+				} else {
+					data.HasSentPassword = false
+					data.Password = nil
+				}
 				authType = "userpass"
 			}
 			type Request struct {
@@ -104,7 +121,7 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 			data.CertSigner = certSigner
 			return conn, nil
 		}, &ssh.AuthPipe{
-			User: conn.User(),
+			User: sshUser,
 
 			PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey, data *ssh.AuthData) (ssh.AuthPipeType, ssh.AuthMethod, error) {
 				if data.HasSentPassword {
@@ -129,11 +146,11 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				data.Password = password
 			},
 
-			InteractiveInstrution: "Please input Vlab username & password and UNIX password.",
+			InteractiveInstrution: "Please enter Vlab username & password and UNIX password.",
 
-			InteractiveQuestions: []string{"Vlab username (Student ID): ", "Vlab password: ", "UNIX password: "},
+			InteractiveQuestions: interactiveQuestions,
 
-			InteractiveEcho: []bool{true, false, false},
+			InteractiveEcho: interactiveEcho,
 		}, nil
 }
 
