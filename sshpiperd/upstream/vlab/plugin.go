@@ -23,7 +23,7 @@ type plugin struct {
 func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalChallengeContext) (
 	func(unixUsername string, key ssh.PublicKey, answers []string, data *ssh.AuthData) (net.Conn, error), *ssh.AuthPipe, error) {
 	sshUser := conn.User()
-	requireUnixPassword := !(sshUser == "root" || sshUser == "ubuntu" || sshUser == "vlab" || sshUser == "recovery")
+	requireUnixPassword := !(sshUser == "root" || sshUser == "ubuntu" || sshUser == "vlab" || sshUser == "recovery" || sshUser == "console")
 
 	interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 	interactiveEcho := []bool{true, false}
@@ -101,7 +101,7 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 			if response.Status != "ok" {
 				return nil, errors.New("Failed to auth")
 			}
-			if unixUsername == "recovery" {
+			if unixUsername == "recovery" || unixUsername == "console" {
 				conn, err := net.Dial("tcp", config.RecoveryServer)
 				if err == nil {
 					data.HasSentPassword = true
