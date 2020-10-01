@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"net"
@@ -22,7 +23,7 @@ type plugin struct {
 func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalChallengeContext) (
 	func(unixUsername string, key ssh.PublicKey, answers []string, data *ssh.AuthData) (net.Conn, error), *ssh.AuthPipe, error) {
 	sshUser := conn.User()
-	requireUnixPassword := !(sshUser == "root" || sshUser == "ubuntu" || sshUser == "vlab")
+	requireUnixPassword := !(sshUser == "root" || sshUser == "ubuntu" || sshUser == "vlab" || sshUser == "recovery")
 
 	interactiveQuestions := []string{"Vlab username (Student ID): ", "Vlab password: "}
 	interactiveEcho := []bool{true, false}
@@ -86,10 +87,11 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				return nil, err
 			}
 			type Response struct {
-				Status     string `json:"status`
-				Address    string `json:"address"`
-				PrivateKey string `json:"private_key"`
-				Cert       string `json:"cert"`
+				Status		string	`json:"status`
+				Address		string	`json:"address"`
+				PrivateKey	string	`json:"private_key"`
+				Cert 		string	`json:"cert"`
+				Id			int		`json:"vmid"`
 			}
 			var response Response
 			err = json.Unmarshal(body, &response)
@@ -99,6 +101,14 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 			if response.Status != "ok" {
 				return nil, errors.New("Failed to auth")
 			}
+			if unixUsername == "recovery" {
+				conn, err := net.Dial("tcp", config.RecoveryServer)
+				if err == nil {
+					data.HasSentPassword = true
+					data.Password = []byte(fmt.Sprintf("%d %s", response.Id, config.Token))
+					return conn, nil
+				}
+			}
 			conn, err := net.Dial("tcp", response.Address)
 			if err != nil {
 				return nil, err
@@ -106,19 +116,19 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 			var signer ssh.Signer
 			if response.PrivateKey != "" {
 				signer, err = ssh.ParsePrivateKey([]byte(response.PrivateKey))
-			}
-			if err != nil {
+				if err != nil {
 				return conn, nil
+				}
+				pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(response.Cert))
+				if err != nil {
+					return conn, nil
+				}
+				certSigner, err := ssh.NewCertSigner(pk.(*ssh.Certificate), signer)
+				if err != nil {
+					return conn, nil
+				}
+				data.CertSigner = certSigner
 			}
-			pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(response.Cert))
-			if err != nil {
-				return conn, nil
-			}
-			certSigner, err := ssh.NewCertSigner(pk.(*ssh.Certificate), signer)
-			if err != nil {
-				return conn, nil
-			}
-			data.CertSigner = certSigner
 			return conn, nil
 		}, &ssh.AuthPipe{
 			User: sshUser,
