@@ -501,7 +501,7 @@ func NewSSHPiperConn(conn net.Conn, piper *PiperConfig) (pipe *PiperConn, err er
 					return nil, err
 				}
 				upconn, err = upconnCallback(mappedUser, nil, answers, &data)
-				if err != nil {
+				if err != nil || u == nil {
 					return nil, err
 				}
 				addr := upconn.RemoteAddr().String()

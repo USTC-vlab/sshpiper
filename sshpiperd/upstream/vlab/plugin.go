@@ -99,7 +99,7 @@ func findUpstreamFromAPI(conn ssh.ConnMetadata, challengeContext ssh.AdditionalC
 				return nil, err
 			}
 			if response.Status != "ok" {
-				return nil, errors.New("Failed to auth")
+				return nil, nil
 			}
 			if unixUsername == "recovery" || unixUsername == "console" {
 				conn, err := net.Dial("tcp", config.RecoveryServer)
